@@ -7,6 +7,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
@@ -19,8 +20,8 @@ class Kartu(val id: String, val ikon: String, val judul: String, val bulan: Int,
             val pakaiKm: Boolean, val pakaiKet: Boolean, val item: List<String>)
 
 val KARTU = listOf(
-    Kartu("service", "🔧", "Jadwal Service Motor", 3, true, true, listOf("Motor 1", "Motor 2")),
-    Kartu("oli", "🛢️", "Jadwal Ganti Oli", 1, true, false, listOf("Motor 1", "Motor 2")),
+    Kartu("service", "🔧", "Jadwal Service Motor", 3, true, true, listOf("PCX", "SOULT GT")),
+    Kartu("oli", "🛢️", "Jadwal Ganti Oli", 1, true, false, listOf("PCX", "SOULT GT")),
     Kartu("ac", "❄️", "Jadwal Cuci AC", 3, false, false, listOf("AC 1", "AC 2"))
 )
 val FMT = SimpleDateFormat("dd MMM yyyy", Locale("id", "ID"))
@@ -52,17 +53,20 @@ fun jadwalkan(c: Context, k: Int, i: Int) {
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
         val nm = c.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val nada = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+        val simpan = prefs(c).getString("nada", null)
+        val nada: Uri = if (simpan != null) Uri.parse(simpan)
+            else (RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
+        val chId = "alarm_" + nada.toString().hashCode()
         if (Build.VERSION.SDK_INT >= 26) {
-            val ch = NotificationChannel("alarm", "Pengingat Jadwal", NotificationManager.IMPORTANCE_HIGH)
+            val ch = NotificationChannel(chId, "Pengingat Jadwal", NotificationManager.IMPORTANCE_HIGH)
             ch.setSound(nada, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build())
             ch.enableVibration(true)
             nm.createNotificationChannel(ch)
         }
         val buka = PendingIntent.getActivity(c, 0, Intent(c, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE)
-        val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(c, "alarm") else Notification.Builder(c).setSound(nada)
+        val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(c, chId) else Notification.Builder(c).setSound(nada)
         nm.notify(i.getIntExtra("id", 0), b.setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle("Waktunya jadwal!").setContentText(i.getStringExtra("judul"))
             .setContentIntent(buka).setAutoCancel(true).build())
@@ -88,6 +92,19 @@ class MainActivity : Activity() {
         tampil()
     }
 
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
+        super.onActivityResult(req, res, data)
+        if (req == 99 && res == RESULT_OK) {
+            val uri = data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+            val e = prefs(this).edit()
+            if (uri == null) e.remove("nada") else e.putString("nada", uri.toString())
+            e.apply()
+            Toast.makeText(this, "Nada disimpan", Toast.LENGTH_SHORT).show()
+            tampil()
+        }
+    }
+
     fun tampil() {
         root.removeAllViews()
         root.addView(TextView(this).apply {
@@ -95,6 +112,28 @@ class MainActivity : Activity() {
             setTextColor(Color.parseColor("#0F172A")); setPadding(0, 0, 0, dp(12))
         })
         val p = prefs(this)
+        val u = p.getString("nada", null)
+        val namaNada = if (u == null) "Nada alarm bawaan HP"
+            else RingtoneManager.getRingtone(this, Uri.parse(u))?.getTitle(this) ?: "Nada pilihan"
+        root.addView(Button(this).apply {
+            text = "🔔 Nada Pengingat: $namaNada"; isAllCaps = false
+            setOnClickListener {
+                val i = Intent(RingtoneManager.ACTION_RINGTONE_PICKER)
+                    .putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_ALL)
+                    .putExtra(RingtoneManager.EXTRA_RINGTONE_TITLE, "Pilih nada pengingat")
+                    .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                    .putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
+                    .putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, if (u != null) Uri.parse(u) else null as Uri?)
+                startActivityForResult(i, 99)
+            }
+        })
+        root.addView(Button(this).apply {
+            text = "▶ Tes Bunyi Alarm Sekarang"; isAllCaps = false
+            setOnClickListener {
+                sendBroadcast(Intent(this@MainActivity, AlarmReceiver::class.java)
+                    .putExtra("judul", "Tes pengingat berhasil").putExtra("id", 999))
+            }
+        })
         KARTU.forEachIndexed { k, kt ->
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16))
